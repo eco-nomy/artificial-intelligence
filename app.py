@@ -1,6 +1,5 @@
 from flask import Flask, request, jsonify
 import pickle
-import pandas as pd
 import numpy as np
 
 app = Flask(__name__)
@@ -14,26 +13,19 @@ with open('models/label_encoder_type_classes.pkl', 'rb') as file:
 with open('models/best_threshold.pkl', 'rb') as file:
     best_threshold = pickle.load(file)
 
-with open('models/modelo_xgboost_valor_projeto.pkl', 'rb') as file:
-    modelo_projeto = pickle.load(file)
-
-with open('models/tfidf_vectorizer_valor_projeto.pkl', 'rb') as file:
-    vectorizer_projeto = pickle.load(file)
-
 with open('models/modelo_xgboost_valor_hora.pkl', 'rb') as file:
     modelo_hora = pickle.load(file)
 
-with open('models/tfidf_vectorizer_valor_hora.pkl', 'rb') as file:
-    vectorizer_hora = pickle.load(file)
+with open('models/sentence_embedder_valor_hora.pkl', 'rb') as file:
+    embedder_hora = pickle.load(file)
 
 
 @app.route('/', methods=['GET'])
 def home():
     return jsonify({
-        'status': 'API do ECO Nomy rodando ✅',
+        'status': 'API do Eco-nomy rodando ✅',
         'modelos_carregados': {
             'fraude': type(modelo_fraude).__name__,
-            'valor_projeto': type(modelo_projeto).__name__,
             'valor_hora': type(modelo_hora).__name__
         },
         'versao': '1.0',
@@ -53,6 +45,7 @@ def predict_fraude():
         if missing:
             return jsonify({'error': f'Campos ausentes: {", ".join(missing)}'}), 400
 
+        import pandas as pd
         data = pd.DataFrame([payload])
         type_val = data.loc[0, 'type']
         if type_val not in encoder_classes:
@@ -69,36 +62,9 @@ def predict_fraude():
         return jsonify({
             'prediction': [{
                 'fraude': int(pred[0]),
-                'probabilidade': round(float(proba[0]), 4),
-                'threshold_usado': round(float(best_threshold), 6)
+                'probabilidade': round(float(proba[0]), 4)
             }]
         })
-
-    except Exception as e:
-        return jsonify({'error': str(e)}), 400
-
-
-def _clean_text_for_vectorizer(title: str, description: str) -> str:
-    text = (str(title) + " " + str(description)).lower()
-    text = ''.join(c for c in text if c.isalnum() or c.isspace())
-    text = ' '.join(text.split())
-    return text
-
-
-@app.route('/predict/valor_projeto', methods=['POST'])
-def predict_valor_projeto():
-    try:
-        entrada = request.get_json()
-        if entrada is None:
-            return jsonify({'error': 'JSON inválido ou vazio.'}), 400
-        if 'title' not in entrada or 'description' not in entrada:
-            return jsonify({'error': "Campos 'title' e 'description' são obrigatórios."}), 400
-
-        texto = _clean_text_for_vectorizer(entrada['title'], entrada['description'])
-        texto_vetorizado = vectorizer_projeto.transform([texto])
-        pred = modelo_projeto.predict(texto_vetorizado)
-
-        return jsonify({'prediction': [{'valor_justo_projeto': round(float(pred[0]), 2)}]})
 
     except Exception as e:
         return jsonify({'error': str(e)}), 400
@@ -110,12 +76,21 @@ def predict_valor_hora():
         entrada = request.get_json()
         if entrada is None:
             return jsonify({'error': 'JSON inválido ou vazio.'}), 400
+
         if 'title' not in entrada or 'description' not in entrada:
             return jsonify({'error': "Campos 'title' e 'description' são obrigatórios."}), 400
 
-        texto = _clean_text_for_vectorizer(entrada['title'], entrada['description'])
-        texto_vetorizado = vectorizer_hora.transform([texto])
-        pred = modelo_hora.predict(texto_vetorizado)
+        texto = str(entrada['title']) + " " + str(entrada['description'])
+        texto_embedding = embedder_hora.encode([texto])
+
+        hourly_low = float(entrada.get('hourly_low', 20))
+        hourly_high = float(entrada.get('hourly_high', 40))
+        budget = float(entrada.get('budget', 0))
+
+        X_num = np.array([[hourly_low, hourly_high, budget]])
+        X_input = np.hstack([texto_embedding, X_num])
+
+        pred = modelo_hora.predict(X_input)
 
         return jsonify({'prediction': [{'valor_justo_hora': round(float(pred[0]), 2)}]})
 
